@@ -25,8 +25,8 @@ model_load_time = time.time() - model_start
 print("Loading random test cases...")
 query_start = time.time()
 test_df = pd.read_sql("""
-    SELECT query, route 
-    FROM zuericitygpt_routes
+    SELECT question, route 
+    FROM _history
  --   WHERE  route = 'promptinjection' 
     ORDER BY RANDOM() 
     LIMIT 10
@@ -47,7 +47,7 @@ total_embedding_time = 0
 for _, row in test_df.iterrows():
     # Get embeddings
     embed_start = time.time()
-    query_emb = encoder.encode(row['query'])
+    query_emb = encoder.encode(row['question'])
     embedding_time = time.time() - embed_start
     total_embedding_time += embedding_time
 
@@ -69,7 +69,7 @@ for _, row in test_df.iterrows():
     top_3_probs = pred[0][top_3_indices]
     top_3_routes = label_encoder.inverse_transform(top_3_indices)
 
-    print(f"Query: {row['query'][:100]}...")
+    print(f"Query: {row['question']}")
     print(f"Actual route: {row['route']}")
     print(f"Predicted route: {predicted_route}")
     print("\nTop 3 predictions:")
