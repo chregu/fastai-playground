@@ -5,6 +5,9 @@ from sentence_transformers import SentenceTransformer
 import pandas as pd
 import numpy as np
 import joblib
+import json
+import re
+from sqlalchemy import text
 
 # Database connection
 start_time = time.time()
@@ -25,33 +28,39 @@ model_load_time = time.time() - model_start
 print("Loading random test cases...")
 query_start = time.time()
 test_df = pd.read_sql("""
-    SELECT question, route 
+    SELECT id, question, route, metadata
     FROM _history
- --   WHERE  route = 'promptinjection' 
     ORDER BY RANDOM() 
-    LIMIT 10
+    LIMIT 100000
 """, engine)
 query_time = time.time() - query_start
+
+def clean_question(question):
+    # Remove /mode:.*/ pattern
+    return re.sub(r'mode:\S*', '', question).strip()
 
 print(f"\nSetup times:")
 print(f"Database connection: {db_connect_time:.2f}s")
 print(f"Model loading: {model_load_time:.2f}s")
 print(f"Query execution: {query_time:.2f}s")
 
-print("\nTesting predictions...")
+print("\nTesting predictions and updating metadata...")
 print("-" * 80)
 
 total_inference_time = 0
 total_embedding_time = 0
 
 for _, row in test_df.iterrows():
+    # Clean the question
+    cleaned_question = clean_question(row['question'])
+
     # Get embeddings
     embed_start = time.time()
-    query_emb = encoder.encode(row['question'])
+    query_emb = encoder.encode(cleaned_question)
     embedding_time = time.time() - embed_start
     total_embedding_time += embedding_time
 
-    # Create a DataFrame with the embeddings using the same column names as training
+    # Create a DataFrame with the embeddings
     embed_cols = [f'embed_{i}' for i in range(len(query_emb))]
     feature_df = pd.DataFrame([query_emb], columns=embed_cols)
 
@@ -64,20 +73,60 @@ for _, row in test_df.iterrows():
     inference_time = time.time() - infer_start
     total_inference_time += inference_time
 
-    # Get prediction probabilities for top 3 classes
-    top_3_indices = pred[0].argsort(descending=True)[:3]
-    top_3_probs = pred[0][top_3_indices]
-    top_3_routes = label_encoder.inverse_transform(top_3_indices)
+    # Update metadata
+    try:
+        current_metadata = row['metadata'] if row['metadata'] else {}
+        if isinstance(current_metadata, str):
+            current_metadata = json.loads(current_metadata)
 
-    print(f"Query: {row['question']}")
-    print(f"Actual route: {row['route']}")
-    print(f"Predicted route: {predicted_route}")
-    print("\nTop 3 predictions:")
-    for route, prob in zip(top_3_routes, top_3_probs):
-        print(f"{route}: {prob:.2%}")
-    print(f"Correct: {'✓' if predicted_route == row['route'] else '✗'}")
-    print(f"Embedding time: {embedding_time:.3f}s")
-    print(f"Inference time: {inference_time:.3f}s")
+        # Get prediction probabilities for top 3 classes
+        top_3_indices = pred[0].argsort(descending=True)[:3]
+        top_3_probs = pred[0][top_3_indices]
+        top_3_routes = label_encoder.inverse_transform(top_3_indices)
+
+        current_metadata['predictedRoute'] = predicted_route
+
+        # Create a list of dictionaries for the top 3 predictions
+        top_3_predictions = [
+            {
+                "route": route,
+                "prob": round(float(prob), 2)   # Convert tensor to float for JSON serialization
+            }
+            for route, prob in zip(top_3_routes, top_3_probs)
+            if float(prob) >= 0.05
+        ]
+
+        current_metadata['predictedRoutesProb'] = top_3_predictions
+
+        # Update database
+        update_query = text("""
+                    UPDATE _history 
+                    SET metadata = :metadata 
+                    WHERE id = :id
+                """)
+
+        with engine.connect() as conn:
+            conn.execute(update_query, {
+                'metadata': json.dumps(current_metadata),
+                'id': row['id']
+            })
+            conn.commit()
+
+
+        print(f"Query: {cleaned_question}")
+        print(f"Actual route: {row['route']}")
+        print(f"Predicted route: {predicted_route}")
+        print("Updated metadata with predicted route")
+        print("\nTop 3 predictions:")
+        for route, prob in zip(top_3_routes, top_3_probs):
+            print(f"{route}: {prob:.2%}")
+        print(f"Correct: {'✓' if predicted_route == row['route'] else '✗'}")
+        print(f"Embedding time: {embedding_time:.3f}s")
+        print(f"Inference time: {inference_time:.3f}s")
+
+    except Exception as e:
+        print(f"Error updating metadata for ID {row['id']}: {str(e)}")
+
     print("-" * 80)
 
 avg_embedding_time = total_embedding_time / len(test_df)

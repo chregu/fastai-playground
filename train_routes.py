@@ -13,14 +13,19 @@ engine = create_engine(connection_string)
 
 # Load data
 print("Loading data from database...")
-df = pd.read_sql("SELECT query, route FROM zuericitygpt_routes where auto_detected = false limit 10000", engine)
+df = pd.read_sql("SELECT query, route FROM baselcitygpt_routes where auto_detected = false limit 10000", engine)
 print(f"Loaded {len(df)} records")
 
 # Initialize encoder
 encoder = SentenceTransformer('BAAI/bge-m3')
 
+def clean_question(question):
+    # Remove /mode:.*/ pattern
+    return re.sub(r'mode:\S*', '', question).strip()
+
 def get_query_embedding(row):
-    return encoder.encode(row['query'])
+    return encoder.encode(clean_question(row['query']))
+
 
 # Create embeddings with progress bar
 print("Creating embeddings...")
