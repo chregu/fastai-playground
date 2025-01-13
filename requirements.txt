@@ -1,0 +1,5 @@
+fastai
+pd
+sentence_transformers
+sqlalchemy
+psycopg2
