@@ -3,3 +3,4 @@ pd
 sentence_transformers
 sqlalchemy
 psycopg2
+python-dotenv

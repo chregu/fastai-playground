@@ -1,10 +1,13 @@
-import pandas as pd
-from fastai.text.all import *
 from sentence_transformers import SentenceTransformer
-import numpy as np
 from fastai.tabular.all import *
 from tqdm import tqdm
 from sklearn.preprocessing import LabelEncoder
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+org = os.getenv('ORG')
 
 # Database connection
 from sqlalchemy import create_engine
@@ -12,16 +15,18 @@ connection_string = "postgresql://postgres:postgres@localhost:54322/postgres"
 engine = create_engine(connection_string)
 
 # Load data
-print("Loading data from database...")
-df = pd.read_sql("SELECT query, route FROM baselcitygpt_routes where auto_detected = false limit 10000", engine)
+print(f"Loading data from database for {org}...")
+df = pd.read_sql(
+    f"SELECT query, route FROM {org}_routes where auto_detected = false and route is not null and embedding is not null limit 20000",
+    engine)
 print(f"Loaded {len(df)} records")
 
 # Initialize encoder
 encoder = SentenceTransformer('BAAI/bge-m3')
 
 def clean_question(question):
-    # Remove /mode:.*/ pattern
-    return re.sub(r'mode:\S*', '', question).strip()
+    return re.sub(r'([a-zA-Z]+:\S*|^[A-Z_]+: )', '', question).strip()
+
 
 def get_query_embedding(row):
     return encoder.encode(clean_question(row['query']))
@@ -79,8 +84,8 @@ print(f"Accuracy: {valid_metrics[1]:.4f}")
 
 # Save the model and label encoder
 print("\nSaving model and encoder...")
-learn.export('route_classifier_model.pkl')
+learn.export(f'{org}_route_classifier_model.pkl')
 import joblib
-joblib.dump(label_encoder, 'route_label_encoder.pkl')
+joblib.dump(label_encoder, f'{org}_route_label_encoder.pkl')
 
 print("Done!")
